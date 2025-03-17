@@ -9,7 +9,7 @@ import (
 )
 
 func removeEmptyKOrVAndCapitalizeMap(testMap map[string]string) (map[string]string, error) {
-	return fun.M(testMap).
+	return fun.NewMapStream(testMap).
 		Filter(
 			func(k, v string) (bool, error) {
 				return k != "" && v != "", nil

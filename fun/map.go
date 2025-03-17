@@ -5,44 +5,47 @@ import (
 	"maps"
 )
 
-type MapWorker[K comparable, V any] struct {
+type MapStream[K comparable, V any] struct {
 	data       map[K]V
-	processors []processOneMapElement[K, V]
-	curKey     K
+	processors []processMapElement[K, V]
+
+	next func() (K, bool)
+	stop func()
 }
 
-type processOneMapElement[K comparable, V any] func(
-	next func() (K, bool),
-) (iteratorIsOpen bool, err error)
+type processMapElement[K comparable, V any] func(
+	k K,
+	v V,
+) (updatedKey K, updatedValue V, iteratorIsOpen bool, err error)
 
-func M[K comparable, V any](data map[K]V) *MapWorker[K, V] {
-	dst := make(map[K]V, len(data))
-	maps.Copy(dst, data)
+func NewMapStream[K comparable, V any](data map[K]V) *MapStream[K, V] {
+	keyIterator := maps.Keys(data)
+	next, stop := iter.Pull(keyIterator)
 
-	return &MapWorker[K, V]{
-		data: dst,
+	return &MapStream[K, V]{
+		data: data,
+		next: next,
+		stop: stop,
 	}
 }
 
-func (m *MapWorker[K, V]) Collect() (map[K]V, error) {
-	keyIterator := maps.Keys(m.data)
-	next, stop := iter.Pull(keyIterator)
-	defer stop()
-
-	iteratorIsOpen := true
+func (m *MapStream[K, V]) Collect() (map[K]V, error) {
 	var err error
+	var curKey K
+	iteratorIsOpen := true
+	dst := map[K]V{}
 
-	// Walk through our map once, streaming each key/value through
-	// the processors.
-	for {
-		m.curKey, iteratorIsOpen = next()
+	// Walk through our map once, streaming each key/value through the processors.
+	for iteratorIsOpen {
+		curKey, iteratorIsOpen = m.next()
 		if !iteratorIsOpen {
-			return m.data, nil
+			return dst, nil
 		}
 
 		// run each processor for the current element
+		curVal := m.data[curKey]
 		for _, process := range m.processors {
-			iteratorIsOpen, err = process(next)
+			curKey, curVal, iteratorIsOpen, err = process(curKey, curVal)
 
 			switch {
 			case err != nil:
@@ -51,61 +54,54 @@ func (m *MapWorker[K, V]) Collect() (map[K]V, error) {
 			// if the iterator was closed by the process function,
 			// that means we are done processing elements
 			case !iteratorIsOpen:
-				return m.data, nil
+				return dst, nil
 			}
 		}
+
+		dst[curKey] = curVal
 	}
+
+	return dst, nil
 }
 
-func (m *MapWorker[K, V]) Filter(check func(K, V) (bool, error)) *MapWorker[K, V] {
-	runCheck := func(next func() (K, bool)) (bool, error) {
+func (m *MapStream[K, V]) Filter(check func(K, V) (bool, error)) *MapStream[K, V] {
+	runCheck := func(k K, v V) (K, V, bool, error) {
 		iteratorIsOpen := true
 
 		for iteratorIsOpen {
-			satisfiesCondition, err := check(m.curKey, m.curVal())
+			satisfiesCondition, err := check(k, v)
 
 			switch {
 			case err != nil:
-				return false, err
+				return k, v, false, err
 
 			case satisfiesCondition:
-				return true, nil
+				return k, v, true, nil
 
 			default:
-				// Didn't satisfy the check, get it outta here and check the next one
-				delete(m.data, m.curKey)
-				m.curKey, iteratorIsOpen = next()
+				// Didn't satisfy the check, move on and check the next one
+				k, iteratorIsOpen = m.next()
+				v = m.data[k]
 			}
 		}
 
-		return iteratorIsOpen, nil
+		return k, v, iteratorIsOpen, nil
 	}
 
 	m.processors = append(m.processors, runCheck)
 	return m
 }
 
-func (m *MapWorker[K, V]) Map(transform func(K, V) (K, V, error)) *MapWorker[K, V] {
-	runTransform := func(next func() (K, bool)) (bool, error) {
-		updatedKey, updatedValue, err := transform(m.curKey, m.curVal())
+func (m *MapStream[K, V]) Map(transform func(K, V) (K, V, error)) *MapStream[K, V] {
+	runTransform := func(k K, v V) (K, V, bool, error) {
+		updatedKey, updatedValue, err := transform(k, v)
 		if err != nil {
-			return true, err
+			return k, v, true, err
 		}
 
-		m.data[updatedKey] = updatedValue
-
-		if updatedKey != m.curKey {
-			delete(m.data, m.curKey)
-			m.curKey = updatedKey
-		}
-
-		return true, nil
+		return updatedKey, updatedValue, true, nil
 	}
 
 	m.processors = append(m.processors, runTransform)
 	return m
-}
-
-func (m *MapWorker[K, V]) curVal() V {
-	return m.data[m.curKey]
 }

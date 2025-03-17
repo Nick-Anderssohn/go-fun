@@ -1,80 +1,87 @@
 package fun
 
-type processOne[V any] func(worker *SliceWorker[V], pos int) error
-
-type SliceWorker[V any] struct {
+type SliceStream[V any] struct {
 	data       []V
-	processors []processOne[V]
+	processors []processSliceElement[V]
+
+	pos int
 }
 
-func S[V any](data []V) *SliceWorker[V] {
-	dst := make([]V, len(data))
-	copy(dst, data)
+type processSliceElement[V any] func(v V) (V, error)
 
-	return &SliceWorker[V]{
-		data: dst,
+func NewSliceStream[V any](data []V) *SliceStream[V] {
+	return &SliceStream[V]{
+		data: data,
 	}
 }
 
-func (s *SliceWorker[V]) Filter(check func(V) (bool, error)) *SliceWorker[V] {
-	runCheck := func(worker *SliceWorker[V], pos int) error {
-		for pos < len(worker.data) {
-			satisfiesCondition, err := check(worker.data[pos])
+func (s *SliceStream[V]) Collect() ([]V, error) {
+	dst := []V{}
+
+	// Walk through our list once, streaming each value through
+	// the processors.
+	for ; s.pos < len(s.data); s.pos++ {
+		var err error
+		v := s.data[s.pos]
+
+		// run each processor for the current element
+		for _, process := range s.processors {
+			v, err = process(v)
 
 			switch {
+			case err == errEndOfStream:
+				return dst, nil
+
 			case err != nil:
-				return err
-
-			case satisfiesCondition:
-				return nil
-
-			default:
-				// Didn't satisfy the check, get it outta here and check the next one
-				worker.data = append(worker.data[:pos], worker.data[pos+1:]...)
+				return []V{}, err
 			}
 		}
 
-		return nil
+		dst = append(dst, v)
+	}
+
+	return dst, nil
+}
+
+func (s *SliceStream[V]) Filter(check func(V) (bool, error)) *SliceStream[V] {
+	runCheck := func(v V) (V, error) {
+		for s.pos < len(s.data) {
+			satisfiesCondition, err := check(v)
+
+			switch {
+			case err != nil:
+				return v, err
+
+			case satisfiesCondition:
+				return v, nil
+
+			default:
+				// We'll try the next one
+				s.pos++
+
+				if s.pos < len(s.data) {
+					v = s.data[s.pos]
+				}
+			}
+		}
+
+		return v, errEndOfStream
 	}
 
 	s.processors = append(s.processors, runCheck)
 	return s
 }
 
-func (s *SliceWorker[V]) Map(modify func(V) (V, error)) *SliceWorker[V] {
-	runModify := func(worker *SliceWorker[V], pos int) error {
-		updatedValue, err := modify(s.data[pos])
+func (s *SliceStream[V]) Map(transform func(V) (V, error)) *SliceStream[V] {
+	runTransform := func(v V) (V, error) {
+		updatedValue, err := transform(v)
 		if err != nil {
-			return err
+			return v, err
 		}
 
-		s.data[pos] = updatedValue
-
-		return nil
+		return updatedValue, err
 	}
 
-	s.processors = append(s.processors, runModify)
+	s.processors = append(s.processors, runTransform)
 	return s
-}
-
-func (s *SliceWorker[V]) Finish() ([]V, error) {
-	// Walk through our list once. Yay O(N)
-	for i := 0; i < len(s.data); i++ {
-		// run each processor for the current element
-		for _, process := range s.processors {
-			err := process(s, i)
-			if err != nil {
-				return []V{}, err
-			}
-
-			// In case the process function removed enough elements
-			// to cause our index to be out of bounds (ex Filter could do that).
-			// Note that this is okay; this is not an error.
-			if i >= len(s.data) {
-				return s.data, nil
-			}
-		}
-	}
-
-	return s.data, nil
 }

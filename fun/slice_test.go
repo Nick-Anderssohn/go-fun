@@ -9,7 +9,7 @@ import (
 )
 
 func removeEmptyAndCapitalize(testSlice []string) ([]string, error) {
-	return fun.S(testSlice).
+	return fun.NewSliceStream(testSlice).
 		Filter(
 			func(v string) (bool, error) {
 				return v != "", nil
@@ -20,7 +20,7 @@ func removeEmptyAndCapitalize(testSlice []string) ([]string, error) {
 				return strings.ToUpper(v), nil
 			},
 		).
-		Finish()
+		Collect()
 }
 
 func TestEmptySlice(t *testing.T) {
@@ -54,7 +54,7 @@ func TestRemoveEmptyAndCapitalize(t *testing.T) {
 	result, err := removeEmptyAndCapitalize(testSlice)
 
 	if err != nil {
-		t.Errorf("empty string slice resulted in error: %v", err)
+		t.Errorf("err: %v", err)
 	}
 
 	if !reflect.DeepEqual(result, expectedResult) {
