@@ -1,2 +1,2 @@
-# go-fun
-A functional programming library for golang.
+# go-fun WIP
+**WIP** A functional programming library for golang.
