@@ -1,8 +1,11 @@
 # go-fun
 **This is a work in progress**
 
-A pretty self-explanatory streaming/functional programming library.
-APIs exist for both slices and maps.
+A pretty self-explanatory streaming/functional programming library. APIs exist for both slices and maps.
+Go is not intended to be a functional programming language, so
+I'm mainly just creating this for fun and to learn go generics, since they did
+not exist last time I used this language.
+Slice example:
 ```golang
 	fun.NewSliceStream(testSlice).
 		Filter(
